@@ -22,6 +22,7 @@ const lastRequestByUser = new Map();
 const STYLE_COLORS = {
   anime: 0xff7a59,
   portrait: 0x4f8cff,
+  fullbody: 0xffb347,
   chibi: 0x7ddc6f,
   wallpaper: 0xf7c948
 };

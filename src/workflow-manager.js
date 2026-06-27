@@ -10,6 +10,7 @@ export const STYLE_PRESETS = {
   anime: {
     workflowFile: 'anime-sdxl-api.json',
     prefix: 'masterpiece, best quality, anime illustration',
+    negativePrefix: '',
     width: 1024,
     height: 1024,
     steps: 28,
@@ -17,15 +18,26 @@ export const STYLE_PRESETS = {
   },
   portrait: {
     workflowFile: 'anime-sdxl-api.json',
-    prefix: 'masterpiece, best quality, anime illustration, portrait',
+    prefix: 'masterpiece, best quality, anime illustration, portrait, upper body, face focus',
+    negativePrefix: '',
     width: 832,
     height: 1216,
     steps: 28,
     cfg: 6.5
   },
+  fullbody: {
+    workflowFile: 'anime-sdxl-api.json',
+    prefix: 'masterpiece, best quality, anime illustration, full body, full-length, from head to toe, feet visible, entire figure in frame, standing, centered composition, subject filling most of the frame',
+    negativePrefix: 'close-up, upper body, bust shot, cowboy shot, giant face, superimposed face, tiny full body, miniature person, cut off feet, cropped legs',
+    width: 896,
+    height: 1344,
+    steps: 30,
+    cfg: 6.5
+  },
   chibi: {
     workflowFile: 'anime-sdxl-api.json',
     prefix: 'masterpiece, best quality, cute chibi anime illustration, full body',
+    negativePrefix: '',
     width: 1024,
     height: 1024,
     steps: 26,
@@ -34,6 +46,7 @@ export const STYLE_PRESETS = {
   wallpaper: {
     workflowFile: 'anime-sdxl-api.json',
     prefix: 'masterpiece, best quality, anime illustration, cinematic background, detailed scenery, wallpaper composition',
+    negativePrefix: '',
     width: 1344,
     height: 768,
     steps: 30,
@@ -97,9 +110,10 @@ export async function buildWorkflow({ style, prompt, negativePrompt, seed, model
   const checkpointName = resolveCheckpointName(model);
 
   const positiveText = [preset.prefix, prompt].filter(Boolean).join(', ');
+  const mergedNegativePrompt = [preset.negativePrefix, negativePrompt].filter(Boolean).join(', ');
 
   setNodeInput(workflow, 'GW_POSITIVE', 'text', positiveText);
-  setNodeInput(workflow, 'GW_NEGATIVE', 'text', negativePrompt);
+  setNodeInput(workflow, 'GW_NEGATIVE', 'text', mergedNegativePrompt);
   setNodeInput(workflow, 'GW_KSAMPLER', 'seed', seed);
   setNodeInput(workflow, 'GW_KSAMPLER', 'steps', preset.steps);
   setNodeInput(workflow, 'GW_KSAMPLER', 'cfg', preset.cfg);
