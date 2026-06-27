@@ -1,0 +1,7 @@
+@echo off
+start "ComfyUI" "C:\ComfyUI_windows_portable\run_nvidia_gpu.bat"
+
+timeout /t 8 /nobreak
+
+npm start
+pause

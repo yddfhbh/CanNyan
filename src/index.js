@@ -1,0 +1,263 @@
+import { randomInt } from 'node:crypto';
+import {
+  AttachmentBuilder,
+  Client,
+  EmbedBuilder,
+  GatewayIntentBits
+} from 'discord.js';
+import { config } from './config.js';
+import { TaskQueue } from './queue.js';
+import { generateImage } from './comfyui.js';
+
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds]
+});
+
+const imageQueue = new TaskQueue({
+  concurrency: config.queueConcurrency,
+  maxQueue: config.maxQueue
+});
+
+const lastRequestByUser = new Map();
+const STYLE_COLORS = {
+  anime: 0xff7a59,
+  portrait: 0x4f8cff,
+  chibi: 0x7ddc6f,
+  wallpaper: 0xf7c948
+};
+
+function makeSeed() {
+  return randomInt(0, 2147483647);
+}
+
+function formatError(error) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function truncate(text, max = 180) {
+  if (!text) return '';
+  return text.length > max ? `${text.slice(0, max - 3)}...` : text;
+}
+
+function buildNegativePrompt(extraNegative) {
+  return [config.defaultNegativePrompt, extraNegative]
+    .filter(Boolean)
+    .join(', ');
+}
+
+function buildQueueMeta(interaction, request) {
+  return {
+    userId: interaction.user.id,
+    prompt: request.prompt,
+    style: request.style,
+    seed: request.seed
+  };
+}
+
+function formatQueueItem(item, index) {
+  return `${index + 1}. <@${item.meta.userId}> [${item.meta.style}] seed ${item.meta.seed} - ${truncate(item.meta.prompt, 72)}`;
+}
+
+function buildResultEmbed(request, filename, isReroll) {
+  return new EmbedBuilder()
+    .setColor(STYLE_COLORS[request.style] || 0x5865f2)
+    .setTitle(isReroll ? '이미지 리롤 완료' : '이미지 생성 완료')
+    .addFields(
+      { name: 'Style', value: request.style, inline: true },
+      { name: 'Seed', value: String(request.seed), inline: true },
+      { name: 'Prompt', value: request.prompt }
+    )
+    .setImage(`attachment://${filename}`)
+    .setTimestamp();
+}
+
+async function runGeneration(interaction, request, { isReroll = false } = {}) {
+  const negativePrompt = buildNegativePrompt(request.extraNegative);
+
+  await interaction.deferReply();
+
+  let queued;
+  try {
+    queued = imageQueue.submit(async () => {
+      await interaction.editReply({
+        content: [
+          isReroll ? '리롤 시작' : '생성 시작',
+          `style: ${request.style}`,
+          `seed: ${request.seed}`,
+          `prompt: ${truncate(request.prompt)}`
+        ].join('\n')
+      });
+
+      return generateImage({
+        style: request.style,
+        prompt: request.prompt,
+        negativePrompt,
+        seed: request.seed
+      });
+    }, buildQueueMeta(interaction, request));
+  } catch (error) {
+    await interaction.editReply({
+      content: `실패: ${formatError(error)}`
+    });
+    return;
+  }
+
+  const { position, promise } = queued;
+
+  if (position > 1) {
+    await interaction.editReply({
+      content: [
+        isReroll ? '리롤 요청이 대기열에 추가됨' : '생성 요청이 대기열에 추가됨',
+        `앞에 ${position - 1}개 작업이 있어.`,
+        `style: ${request.style}`,
+        `seed: ${request.seed}`,
+        `prompt: ${truncate(request.prompt)}`
+      ].join('\n')
+    });
+  }
+
+  try {
+    const result = await promise;
+
+    const attachment = new AttachmentBuilder(result.buffer, {
+      name: result.filename
+    });
+
+    await interaction.editReply({
+      content: '',
+      embeds: [buildResultEmbed(request, result.filename, isReroll)],
+      files: [attachment]
+    });
+  } catch (error) {
+    await interaction.editReply({
+      content: `생성 실패: ${formatError(error)}`
+    });
+  }
+}
+
+async function handleIllust(interaction) {
+  const request = {
+    prompt: interaction.options.getString('prompt', true).trim(),
+    style: interaction.options.getString('style') || 'anime',
+    seed: interaction.options.getInteger('seed') ?? makeSeed(),
+    extraNegative: interaction.options.getString('negative')?.trim() || ''
+  };
+
+  lastRequestByUser.set(interaction.user.id, {
+    prompt: request.prompt,
+    style: request.style,
+    extraNegative: request.extraNegative
+  });
+
+  await runGeneration(interaction, request);
+}
+
+async function handleReroll(interaction) {
+  const previous = lastRequestByUser.get(interaction.user.id);
+
+  if (!previous) {
+    await interaction.reply({
+      content: '리롤할 이전 생성 기록이 없어. 먼저 `/illust`로 한 번 생성해줘.',
+      ephemeral: true
+    });
+    return;
+  }
+
+  const request = {
+    prompt: previous.prompt,
+    style: previous.style,
+    extraNegative: previous.extraNegative,
+    seed: makeSeed()
+  };
+
+  lastRequestByUser.set(interaction.user.id, {
+    prompt: request.prompt,
+    style: request.style,
+    extraNegative: request.extraNegative
+  });
+
+  await runGeneration(interaction, request, { isReroll: true });
+}
+
+async function handleStatus(interaction) {
+  const snapshot = imageQueue.getSnapshot();
+  const runningText = snapshot.runningItems.length > 0
+    ? snapshot.runningItems.map(formatQueueItem).join('\n')
+    : '없음';
+  const pendingText = snapshot.pendingItems.length > 0
+    ? snapshot.pendingItems.map(formatQueueItem).join('\n')
+    : '없음';
+
+  await interaction.reply({
+    content: [
+      '현재 이미지 큐 상태',
+      `running: ${snapshot.running}`,
+      `pending: ${snapshot.pending}`,
+      `concurrency: ${snapshot.concurrency}`,
+      `max pending: ${snapshot.maxQueue}`,
+      '',
+      '[실행 중]',
+      runningText,
+      '',
+      '[대기 중]',
+      pendingText
+    ].join('\n'),
+    ephemeral: true
+  });
+}
+
+client.once('ready', () => {
+  console.log(`Logged in as ${client.user.tag}`);
+});
+
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) {
+    return;
+  }
+
+  try {
+    if (interaction.commandName === 'illust') {
+      await handleIllust(interaction);
+      return;
+    }
+
+    if (interaction.commandName === 'imgstatus') {
+      await handleStatus(interaction);
+      return;
+    }
+
+    if (interaction.commandName === 'reroll') {
+      await handleReroll(interaction);
+      return;
+    }
+  } catch (error) {
+    console.error('Interaction handling error:');
+    console.error(error);
+
+    const message = `오류: ${formatError(error)}`;
+
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content: message });
+      } else {
+        await interaction.reply({ content: message, ephemeral: true });
+      }
+    } catch (replyError) {
+      console.error('Failed to send error reply:');
+      console.error(replyError);
+    }
+  }
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+});
+
+client.login(config.discordToken);
