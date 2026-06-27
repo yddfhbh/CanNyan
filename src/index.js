@@ -53,12 +53,13 @@ function buildQueueMeta(interaction, request) {
     userId: interaction.user.id,
     prompt: request.prompt,
     style: request.style,
+    model: request.model,
     seed: request.seed
   };
 }
 
 function formatQueueItem(item, index) {
-  return `${index + 1}. <@${item.meta.userId}> [${item.meta.style}] seed ${item.meta.seed} - ${truncate(item.meta.prompt, 72)}`;
+  return `${index + 1}. <@${item.meta.userId}> [${item.meta.style} / ${item.meta.model}] seed ${item.meta.seed} - ${truncate(item.meta.prompt, 72)}`;
 }
 
 function buildResultEmbed(request, filename, isReroll) {
@@ -67,6 +68,7 @@ function buildResultEmbed(request, filename, isReroll) {
     .setTitle(isReroll ? '이미지 리롤 완료' : '이미지 생성 완료')
     .addFields(
       { name: 'Style', value: request.style, inline: true },
+      { name: 'Model', value: request.model, inline: true },
       { name: 'Seed', value: String(request.seed), inline: true },
       { name: 'Prompt', value: request.prompt }
     )
@@ -86,6 +88,7 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
         content: [
           isReroll ? '리롤 시작' : '생성 시작',
           `style: ${request.style}`,
+          `model: ${request.model}`,
           `seed: ${request.seed}`,
           `prompt: ${truncate(request.prompt)}`
         ].join('\n')
@@ -95,7 +98,8 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
         style: request.style,
         prompt: request.prompt,
         negativePrompt,
-        seed: request.seed
+        seed: request.seed,
+        model: request.model
       });
     }, buildQueueMeta(interaction, request));
   } catch (error) {
@@ -113,6 +117,7 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
         isReroll ? '리롤 요청이 대기열에 추가됨' : '생성 요청이 대기열에 추가됨',
         `앞에 ${position - 1}개 작업이 있어.`,
         `style: ${request.style}`,
+        `model: ${request.model}`,
         `seed: ${request.seed}`,
         `prompt: ${truncate(request.prompt)}`
       ].join('\n')
@@ -142,6 +147,7 @@ async function handleIllust(interaction) {
   const request = {
     prompt: interaction.options.getString('prompt', true).trim(),
     style: interaction.options.getString('style') || 'anime',
+    model: interaction.options.getString('model') || config.defaultModelName || 'default',
     seed: interaction.options.getInteger('seed') ?? makeSeed(),
     extraNegative: interaction.options.getString('negative')?.trim() || ''
   };
@@ -149,6 +155,7 @@ async function handleIllust(interaction) {
   lastRequestByUser.set(interaction.user.id, {
     prompt: request.prompt,
     style: request.style,
+    model: request.model,
     extraNegative: request.extraNegative
   });
 
@@ -169,6 +176,7 @@ async function handleReroll(interaction) {
   const request = {
     prompt: previous.prompt,
     style: previous.style,
+    model: previous.model,
     extraNegative: previous.extraNegative,
     seed: makeSeed()
   };
@@ -176,6 +184,7 @@ async function handleReroll(interaction) {
   lastRequestByUser.set(interaction.user.id, {
     prompt: request.prompt,
     style: request.style,
+    model: request.model,
     extraNegative: request.extraNegative
   });
 

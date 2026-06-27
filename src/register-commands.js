@@ -1,6 +1,6 @@
 import { REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { config } from './config.js';
-import { STYLE_CHOICES } from './workflow-manager.js';
+import { MODEL_CHOICES, STYLE_CHOICES } from './workflow-manager.js';
 
 const commands = [
   new SlashCommandBuilder()
@@ -21,6 +21,18 @@ const commands = [
 
       for (const style of STYLE_CHOICES) {
         option.addChoices({ name: style, value: style });
+      }
+
+      return option;
+    })
+    .addStringOption((option) => {
+      option
+        .setName('model')
+        .setDescription('사용할 체크포인트 모델')
+        .setRequired(false);
+
+      for (const model of MODEL_CHOICES) {
+        option.addChoices({ name: model, value: model });
       }
 
       return option;

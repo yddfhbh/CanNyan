@@ -17,7 +17,7 @@ export const STYLE_PRESETS = {
   },
   portrait: {
     workflowFile: 'anime-sdxl-api.json',
-    prefix: 'masterpiece, best quality, anime illustration, portrait, upper body',
+    prefix: 'masterpiece, best quality, anime illustration, portrait',
     width: 832,
     height: 1216,
     steps: 28,
@@ -42,6 +42,7 @@ export const STYLE_PRESETS = {
 };
 
 export const STYLE_CHOICES = Object.keys(STYLE_PRESETS);
+export const MODEL_CHOICES = config.comfyuiModelPresets.map((preset) => preset.name);
 
 const workflowCache = new Map();
 
@@ -79,10 +80,21 @@ function setNodeInput(workflow, title, inputKey, value, { required = true } = {}
   found.node.inputs[inputKey] = value;
 }
 
-export async function buildWorkflow({ style, prompt, negativePrompt, seed }) {
+function resolveCheckpointName(model) {
+  const matchedPreset = config.comfyuiModelPresets.find((preset) => preset.name === model);
+
+  if (matchedPreset?.checkpoint) {
+    return matchedPreset.checkpoint;
+  }
+
+  return config.comfyuiCheckpointName;
+}
+
+export async function buildWorkflow({ style, prompt, negativePrompt, seed, model }) {
   const preset = STYLE_PRESETS[style] || STYLE_PRESETS.anime;
   const baseWorkflow = await loadWorkflowFile(preset.workflowFile);
   const workflow = structuredClone(baseWorkflow);
+  const checkpointName = resolveCheckpointName(model);
 
   const positiveText = [preset.prefix, prompt].filter(Boolean).join(', ');
 
@@ -95,12 +107,12 @@ export async function buildWorkflow({ style, prompt, negativePrompt, seed }) {
   setNodeInput(workflow, 'GW_LATENT', 'height', preset.height);
   setNodeInput(workflow, 'GW_SAVE', 'filename_prefix', `discord_${style}`);
 
-  if (config.comfyuiCheckpointName) {
+  if (checkpointName) {
     setNodeInput(
       workflow,
       'GW_CHECKPOINT',
       'ckpt_name',
-      config.comfyuiCheckpointName,
+      checkpointName,
       { required: false }
     );
   }
