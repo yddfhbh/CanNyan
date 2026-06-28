@@ -2,6 +2,47 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+function stripExtension(value) {
+  return String(value || '').replace(/\.[^.]+$/, '').trim();
+}
+
+function normalizeCheckpointEnvValue(value) {
+  const text = String(value || '').trim();
+  if (!text) {
+    return '';
+  }
+
+  if (text.includes('=')) {
+    const [, checkpointRaw] = text.split(/=(.+)/, 2);
+    return String(checkpointRaw || '').trim();
+  }
+
+  return text;
+}
+
+function deriveCheckpointAlias(checkpoint) {
+  const stem = stripExtension(checkpoint);
+  const normalized = stem.toLowerCase();
+
+  if (normalized.includes('miaomiao')) {
+    return 'miaomiao';
+  }
+
+  if (normalized.includes('reedanima')) {
+    return 'reedanima';
+  }
+
+  if (normalized.includes('waianima')) {
+    return 'waianima';
+  }
+
+  return stem;
+}
+
+function uniqueStrings(values) {
+  return [...new Set(values.filter(Boolean).map((value) => String(value).trim()).filter(Boolean))];
+}
+
 function requireEnv(name) {
   const value = process.env[name];
   if (!value || !String(value).trim()) {
@@ -25,10 +66,10 @@ function parseModelPresets(value, fallbackCheckpointName) {
 
   for (const entry of entries) {
     const [aliasRaw, checkpointRaw] = entry.includes('=')
-      ? entry.split('=')
+      ? entry.split(/=(.+)/, 2)
       : [entry, entry];
-    const alias = String(aliasRaw || '').trim();
-    const checkpoint = String(checkpointRaw || '').trim();
+    const checkpoint = normalizeCheckpointEnvValue(checkpointRaw);
+    const alias = String(aliasRaw || '').trim() || deriveCheckpointAlias(checkpoint);
 
     if (!alias || !checkpoint) {
       continue;
@@ -36,7 +77,8 @@ function parseModelPresets(value, fallbackCheckpointName) {
 
     presets.push({
       name: alias,
-      checkpoint
+      checkpoint,
+      aliases: uniqueStrings([alias, checkpoint, stripExtension(checkpoint), deriveCheckpointAlias(checkpoint)])
     });
   }
 
@@ -56,7 +98,7 @@ function parseModelPresets(value, fallbackCheckpointName) {
   return [];
 }
 
-const comfyuiCheckpointName = process.env.COMFYUI_CHECKPOINT_NAME || '';
+const comfyuiCheckpointName = normalizeCheckpointEnvValue(process.env.COMFYUI_CHECKPOINT_NAME || '');
 const comfyuiModelPresets = parseModelPresets(
   process.env.COMFYUI_MODEL_PRESETS,
   comfyuiCheckpointName

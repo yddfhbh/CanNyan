@@ -124,6 +124,13 @@ export const MODEL_CHOICES = config.comfyuiModelPresets.map((preset) => preset.n
 
 const workflowCache = new Map();
 
+function normalizeModelLookup(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
 async function loadWorkflowFile(fileName) {
   if (workflowCache.has(fileName)) {
     return workflowCache.get(fileName);
@@ -179,7 +186,19 @@ function connectNodeInput(workflow, workflowKey, logicalNodeKey, inputKey, sourc
 }
 
 function resolveModelPreset(model) {
-  return config.comfyuiModelPresets.find((preset) => preset.name === model) || null;
+  const lookup = normalizeModelLookup(model);
+
+  return (
+    config.comfyuiModelPresets.find((preset) => {
+      const candidates = [
+        preset.name,
+        preset.checkpoint,
+        ...(Array.isArray(preset.aliases) ? preset.aliases : [])
+      ];
+
+      return candidates.some((candidate) => normalizeModelLookup(candidate) === lookup);
+    }) || null
+  );
 }
 
 export function resolveModelSelection(model) {

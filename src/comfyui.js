@@ -24,14 +24,26 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function formatFetchError(error, pathname) {
+  const reason = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `ComfyUI 연결 실패: ${config.comfyuiBaseUrl}${pathname} 에 접속할 수 없어. ComfyUI 실행 상태와 COMFYUI_BASE_URL을 확인해줘. (${reason})`
+  );
+}
+
 async function postJson(pathname, body) {
-  const response = await fetch(buildUrl(pathname), {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(body)
-  });
+  let response;
+  try {
+    response = await fetch(buildUrl(pathname), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    });
+  } catch (error) {
+    throw formatFetchError(error, pathname);
+  }
 
   const text = await response.text();
   let data = null;
@@ -50,7 +62,12 @@ async function postJson(pathname, body) {
 }
 
 async function getJson(pathname) {
-  const response = await fetch(buildUrl(pathname));
+  let response;
+  try {
+    response = await fetch(buildUrl(pathname));
+  } catch (error) {
+    throw formatFetchError(error, pathname);
+  }
 
   if (!response.ok) {
     throw new Error(`ComfyUI GET ${pathname} failed: ${response.status} ${response.statusText}`);
@@ -107,13 +124,18 @@ async function waitForImage(promptId) {
 }
 
 async function downloadImageBuffer(imageInfo) {
-  const response = await fetch(
-    buildUrl('/view', {
-      filename: imageInfo.filename,
-      subfolder: imageInfo.subfolder || '',
-      type: imageInfo.type || 'output'
-    })
-  );
+  let response;
+  try {
+    response = await fetch(
+      buildUrl('/view', {
+        filename: imageInfo.filename,
+        subfolder: imageInfo.subfolder || '',
+        type: imageInfo.type || 'output'
+      })
+    );
+  } catch (error) {
+    throw formatFetchError(error, '/view');
+  }
 
   if (!response.ok) {
     throw new Error(`Failed to download image from ComfyUI: ${response.status} ${response.statusText}`);
