@@ -8,12 +8,68 @@ const workflowDir = path.resolve(__dirname, '../workflows');
 
 const DEFAULT_WORKFLOW_FILE = 'anime-sdxl-api.json';
 const ANIMA_WORKFLOW_FILE = 'anima-api.json';
+const REED_ANIMA_WORKFLOW_FILE = 'reedAnima.json';
+const WAI_ANIMA_WORKFLOW_FILE = 'waiAniMa.json';
 const DEFAULT_WORKFLOW_KEY = 'anime-sdxl';
 const ANIMA_WORKFLOW_KEY = 'anima';
+const REED_ANIMA_WORKFLOW_KEY = 'reedanima';
+const WAI_ANIMA_WORKFLOW_KEY = 'waianima';
 
-const WORKFLOW_FILES = {
-  [DEFAULT_WORKFLOW_KEY]: DEFAULT_WORKFLOW_FILE,
-  [ANIMA_WORKFLOW_KEY]: ANIMA_WORKFLOW_FILE
+const WORKFLOW_DEFINITIONS = {
+  [DEFAULT_WORKFLOW_KEY]: {
+    fileName: DEFAULT_WORKFLOW_FILE,
+    nodeIds: {
+      ksampler: '3',
+      checkpoint: '4',
+      latent: '5',
+      positive: '6',
+      negative: '7',
+      vaeDecode: '8',
+      save: '9'
+    }
+  },
+  [ANIMA_WORKFLOW_KEY]: {
+    fileName: ANIMA_WORKFLOW_FILE,
+    nodeIds: {
+      ksampler: '1',
+      checkpoint: '2',
+      positive: '3',
+      negative: '4',
+      latent: '5',
+      vaeDecode: '6',
+      save: '7',
+      vae: '8',
+      clip: '9'
+    }
+  },
+  [REED_ANIMA_WORKFLOW_KEY]: {
+    fileName: REED_ANIMA_WORKFLOW_FILE,
+    nodeIds: {
+      latent: '1',
+      ksampler: '2',
+      vaeDecode: '3',
+      vae: '4',
+      checkpoint: '5',
+      positive: '6',
+      negative: '7',
+      clip: '8',
+      save: '9'
+    }
+  },
+  [WAI_ANIMA_WORKFLOW_KEY]: {
+    fileName: WAI_ANIMA_WORKFLOW_FILE,
+    nodeIds: {
+      latent: '1',
+      ksampler: '2',
+      vaeDecode: '3',
+      vae: '4',
+      checkpoint: '5',
+      positive: '6',
+      negative: '7',
+      clip: '8',
+      save: '9'
+    }
+  }
 };
 
 export const STYLE_PRESETS = {
@@ -81,22 +137,26 @@ async function loadWorkflowFile(fileName) {
   return json;
 }
 
-function findNodeByTitle(workflow, title) {
-  for (const [nodeId, node] of Object.entries(workflow)) {
-    if (node?._meta?.title === title) {
-      return { nodeId, node };
-    }
+function findNode(workflow, workflowKey, logicalNodeKey) {
+  const nodeId = WORKFLOW_DEFINITIONS[workflowKey]?.nodeIds?.[logicalNodeKey];
+  if (!nodeId) {
+    return null;
   }
 
-  return null;
+  const node = workflow[nodeId];
+  if (!node) {
+    return null;
+  }
+
+  return { nodeId, node };
 }
 
-function setNodeInput(workflow, title, inputKey, value, { required = true } = {}) {
-  const found = findNodeByTitle(workflow, title);
+function setNodeInput(workflow, workflowKey, logicalNodeKey, inputKey, value, { required = true } = {}) {
+  const found = findNode(workflow, workflowKey, logicalNodeKey);
 
   if (!found) {
     if (required) {
-      throw new Error(`Workflow node not found: ${title}`);
+      throw new Error(`Workflow node not found: ${workflowKey}.${logicalNodeKey}`);
     }
     return;
   }
@@ -104,13 +164,13 @@ function setNodeInput(workflow, title, inputKey, value, { required = true } = {}
   found.node.inputs[inputKey] = value;
 }
 
-function connectNodeInput(workflow, title, inputKey, sourceTitle, outputIndex, { required = true } = {}) {
-  const target = findNodeByTitle(workflow, title);
-  const source = findNodeByTitle(workflow, sourceTitle);
+function connectNodeInput(workflow, workflowKey, logicalNodeKey, inputKey, sourceLogicalNodeKey, outputIndex, { required = true } = {}) {
+  const target = findNode(workflow, workflowKey, logicalNodeKey);
+  const source = findNode(workflow, workflowKey, sourceLogicalNodeKey);
 
   if (!target || !source) {
     if (required) {
-      throw new Error(`Workflow connection not found: ${sourceTitle} -> ${title}.${inputKey}`);
+      throw new Error(`Workflow connection not found: ${workflowKey}.${sourceLogicalNodeKey} -> ${workflowKey}.${logicalNodeKey}.${inputKey}`);
     }
     return;
   }
@@ -168,7 +228,25 @@ function isAnimaModel(model, checkpointName) {
   );
 }
 
+function isReedAnimaModel(model, checkpointName) {
+  const text = `${model || ''} ${checkpointName || ''}`.toLowerCase();
+  return text.includes('reedanima');
+}
+
+function isWaiAnimaModel(model, checkpointName) {
+  const text = `${model || ''} ${checkpointName || ''}`.toLowerCase();
+  return text.includes('waianima');
+}
+
 function resolveWorkflowKey({ model, checkpointName }) {
+  if (isReedAnimaModel(model, checkpointName)) {
+    return REED_ANIMA_WORKFLOW_KEY;
+  }
+
+  if (isWaiAnimaModel(model, checkpointName)) {
+    return WAI_ANIMA_WORKFLOW_KEY;
+  }
+
   if (isAnimaModel(model, checkpointName)) {
     return ANIMA_WORKFLOW_KEY;
   }
@@ -190,7 +268,7 @@ export async function buildWorkflow({ style, prompt, negativePrompt, seed, model
   const modelName = selection.modelName;
   const checkpointName = selection.checkpointName;
   const workflowKey = resolveWorkflowChoice({ model: modelName });
-  const workflowFile = WORKFLOW_FILES[workflowKey] || DEFAULT_WORKFLOW_FILE;
+  const workflowFile = WORKFLOW_DEFINITIONS[workflowKey]?.fileName || DEFAULT_WORKFLOW_FILE;
 
   const baseWorkflow = await loadWorkflowFile(workflowFile);
   const workflow = structuredClone(baseWorkflow);
@@ -200,25 +278,30 @@ export async function buildWorkflow({ style, prompt, negativePrompt, seed, model
     .filter(Boolean)
     .join(', ');
 
-  setNodeInput(workflow, 'GW_POSITIVE', 'text', positiveText);
-  setNodeInput(workflow, 'GW_NEGATIVE', 'text', mergedNegativePrompt);
+  setNodeInput(workflow, workflowKey, 'positive', 'text', positiveText);
+  setNodeInput(workflow, workflowKey, 'negative', 'text', mergedNegativePrompt);
 
-  setNodeInput(workflow, 'GW_KSAMPLER', 'seed', seed);
-  setNodeInput(workflow, 'GW_KSAMPLER', 'steps', preset.steps);
-  setNodeInput(workflow, 'GW_KSAMPLER', 'cfg', preset.cfg);
+  setNodeInput(workflow, workflowKey, 'ksampler', 'seed', seed);
+  setNodeInput(workflow, workflowKey, 'ksampler', 'steps', preset.steps);
+  setNodeInput(workflow, workflowKey, 'ksampler', 'cfg', preset.cfg);
 
-  setNodeInput(workflow, 'GW_LATENT', 'width', preset.width);
-  setNodeInput(workflow, 'GW_LATENT', 'height', preset.height);
+  setNodeInput(workflow, workflowKey, 'latent', 'width', preset.width);
+  setNodeInput(workflow, workflowKey, 'latent', 'height', preset.height);
 
-  if (workflowKey === ANIMA_WORKFLOW_KEY) {
-    connectNodeInput(workflow, 'GW_POSITIVE', 'clip', 'GW_CLIP', 0);
-    connectNodeInput(workflow, 'GW_NEGATIVE', 'clip', 'GW_CLIP', 0);
-    connectNodeInput(workflow, 'GW_VAE_DECODE', 'vae', 'GW_VAE', 0);
+  if (
+    workflowKey === ANIMA_WORKFLOW_KEY ||
+    workflowKey === REED_ANIMA_WORKFLOW_KEY ||
+    workflowKey === WAI_ANIMA_WORKFLOW_KEY
+  ) {
+    connectNodeInput(workflow, workflowKey, 'positive', 'clip', 'clip', 0);
+    connectNodeInput(workflow, workflowKey, 'negative', 'clip', 'clip', 0);
+    connectNodeInput(workflow, workflowKey, 'vaeDecode', 'vae', 'vae', 0);
   }
 
   setNodeInput(
     workflow,
-    'GW_SAVE',
+    workflowKey,
+    'save',
     'filename_prefix',
     `discord_${workflowKey}_${modelName}_${style}`
   );
@@ -226,7 +309,8 @@ export async function buildWorkflow({ style, prompt, negativePrompt, seed, model
   if (checkpointName) {
     setNodeInput(
       workflow,
-      'GW_CHECKPOINT',
+      workflowKey,
+      'checkpoint',
       'ckpt_name',
       checkpointName,
       { required: false }
