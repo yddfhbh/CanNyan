@@ -8,7 +8,7 @@ import {
   MessageFlags
 } from 'discord.js';
 import { config } from './config.js';
-import { resolveWorkflowChoice } from './workflow-manager.js';
+import { resolveModelSelection, resolveWorkflowChoice } from './workflow-manager.js';
 import { TaskQueue } from './queue.js';
 import { generateImage } from './comfyui.js';
 
@@ -103,8 +103,7 @@ function buildResultEmbed(request, filename, isReroll) {
       { name: 'Style', value: request.style, inline: true },
       { name: 'Workflow', value: request.workflow, inline: true },
       { name: 'Model', value: request.model, inline: true },
-      { name: 'Seed', value: String(request.seed), inline: true },
-      { name: 'Prompt', value: request.prompt }
+      { name: 'Seed', value: String(request.seed), inline: true }
     )
     .setImage(`attachment://${filename}`)
     .setTimestamp();
@@ -195,7 +194,9 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
 }
 
 async function handleIllust(interaction) {
-  const selectedModel = interaction.options.getString('model') || config.defaultModelName || 'default';
+  const selectedModel = resolveModelSelection(
+    interaction.options.getString('model') || config.defaultModelName || ''
+  ).modelName;
   const request = {
     prompt: interaction.options.getString('prompt', true).trim(),
     style: interaction.options.getString('style') || 'anime',
@@ -227,11 +228,12 @@ async function handleReroll(interaction) {
     return;
   }
 
+  const selectedModel = resolveModelSelection(previous.model).modelName;
   const request = {
     prompt: previous.prompt,
     style: previous.style,
-    workflow: previous.workflow,
-    model: previous.model,
+    workflow: resolveWorkflowChoice({ model: selectedModel }),
+    model: selectedModel,
     extraNegative: previous.extraNegative,
     seed: makeSeed()
   };

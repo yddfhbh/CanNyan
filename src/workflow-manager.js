@@ -122,14 +122,41 @@ function resolveModelPreset(model) {
   return config.comfyuiModelPresets.find((preset) => preset.name === model) || null;
 }
 
-function resolveCheckpointName(model) {
-  const matchedPreset = resolveModelPreset(model);
+export function resolveModelSelection(model) {
+  const normalizedModel = String(model || '').trim();
 
-  if (matchedPreset?.checkpoint) {
-    return matchedPreset.checkpoint;
+  if (!normalizedModel) {
+    if (config.defaultModelName) {
+      const matchedDefault = resolveModelPreset(config.defaultModelName);
+
+      if (matchedDefault?.checkpoint) {
+        return {
+          modelName: matchedDefault.name,
+          checkpointName: matchedDefault.checkpoint
+        };
+      }
+    }
+
+    if (config.comfyuiCheckpointName) {
+      return {
+        modelName: 'default',
+        checkpointName: config.comfyuiCheckpointName
+      };
+    }
+
+    throw new Error('No default model checkpoint is configured.');
   }
 
-  return config.comfyuiCheckpointName;
+  const matchedPreset = resolveModelPreset(normalizedModel);
+
+  if (matchedPreset?.checkpoint) {
+    return {
+      modelName: matchedPreset.name,
+      checkpointName: matchedPreset.checkpoint
+    };
+  }
+
+  throw new Error(`Unknown model preset: ${normalizedModel}`);
 }
 
 function isAnimaModel(model, checkpointName) {
@@ -150,14 +177,19 @@ function resolveWorkflowKey({ model, checkpointName }) {
 }
 
 export function resolveWorkflowChoice({ model }) {
-  const checkpointName = resolveCheckpointName(model);
-  return resolveWorkflowKey({ model, checkpointName });
+  const selection = resolveModelSelection(model);
+  return resolveWorkflowKey({
+    model: selection.modelName,
+    checkpointName: selection.checkpointName
+  });
 }
 
 export async function buildWorkflow({ style, prompt, negativePrompt, seed, model }) {
   const preset = STYLE_PRESETS[style] || STYLE_PRESETS.anime;
-  const checkpointName = resolveCheckpointName(model);
-  const workflowKey = resolveWorkflowChoice({ model });
+  const selection = resolveModelSelection(model);
+  const modelName = selection.modelName;
+  const checkpointName = selection.checkpointName;
+  const workflowKey = resolveWorkflowChoice({ model: modelName });
   const workflowFile = WORKFLOW_FILES[workflowKey] || DEFAULT_WORKFLOW_FILE;
 
   const baseWorkflow = await loadWorkflowFile(workflowFile);
@@ -188,7 +220,7 @@ export async function buildWorkflow({ style, prompt, negativePrompt, seed, model
     workflow,
     'GW_SAVE',
     'filename_prefix',
-    `discord_${workflowKey}_${model || 'default'}_${style}`
+    `discord_${workflowKey}_${modelName}_${style}`
   );
 
   if (checkpointName) {
