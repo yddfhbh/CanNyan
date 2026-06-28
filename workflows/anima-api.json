@@ -1,0 +1,103 @@
+{
+  "1": {
+    "inputs": {
+      "seed": 836124180821595,
+      "steps": 28,
+      "cfg": 6.5,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": ["2", 0],
+      "positive": ["3", 0],
+      "negative": ["4", 0],
+      "latent_image": ["5", 0]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "GW_KSAMPLER"
+    }
+  },
+  "2": {
+    "inputs": {
+      "ckpt_name": "miaomiaoHarem_anima13.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "GW_CHECKPOINT"
+    }
+  },
+  "3": {
+    "inputs": {
+      "text": "masterpiece, best quality, anime illustration, 1girl, blue hair, smile",
+      "clip": ["9", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "GW_POSITIVE"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": "low quality, worst quality, blurry, bad anatomy, bad hands, extra fingers, text, watermark, logo",
+      "clip": ["9", 0]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "GW_NEGATIVE"
+    }
+  },
+  "5": {
+    "inputs": {
+      "width": 1024,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "GW_LATENT"
+    }
+  },
+  "6": {
+    "inputs": {
+      "samples": ["1", 0],
+      "vae": ["8", 0]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "GW_VAE_DECODE"
+    }
+  },
+  "7": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "format": "png",
+      "format.bit_depth": "8-bit",
+      "format.input_color_space": "sRGB",
+      "images": ["6", 0]
+    },
+    "class_type": "SaveImageAdvanced",
+    "_meta": {
+      "title": "GW_SAVE"
+    }
+  },
+  "8": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "GW_VAE"
+    }
+  },
+  "9": {
+    "inputs": {
+      "clip_name": "miaomiaoHarem_anima13_txt.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "GW_CLIP"
+    }
+  }
+}

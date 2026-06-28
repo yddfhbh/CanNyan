@@ -124,7 +124,7 @@ async function downloadImageBuffer(imageInfo) {
 }
 
 export async function generateImage({ style, prompt, negativePrompt, seed, model }) {
-  const workflow = await buildWorkflow({
+  const builtWorkflow = await buildWorkflow({
     style,
     prompt,
     negativePrompt,
@@ -132,7 +132,7 @@ export async function generateImage({ style, prompt, negativePrompt, seed, model
     model
   });
 
-  const promptId = await queuePrompt(workflow);
+  const promptId = await queuePrompt(builtWorkflow);
   const imageInfo = await waitForImage(promptId);
   const buffer = await downloadImageBuffer(imageInfo);
 

@@ -11,7 +11,7 @@ const commands = [
         .setName('prompt')
         .setDescription('생성 프롬프트')
         .setRequired(true)
-        .setMaxLength(1000)
+        .setMaxLength(4000)
     )
     .addStringOption((option) => {
       option
@@ -50,7 +50,7 @@ const commands = [
         .setName('negative')
         .setDescription('추가 네거티브 프롬프트')
         .setRequired(false)
-        .setMaxLength(1000)
+        .setMaxLength(4000)
     ),
 
   new SlashCommandBuilder()

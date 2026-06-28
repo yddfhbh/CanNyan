@@ -6,9 +6,18 @@ import { config } from './config.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const workflowDir = path.resolve(__dirname, '../workflows');
 
+const DEFAULT_WORKFLOW_FILE = 'anime-sdxl-api.json';
+const ANIMA_WORKFLOW_FILE = 'anima-api.json';
+const DEFAULT_WORKFLOW_KEY = 'anime-sdxl';
+const ANIMA_WORKFLOW_KEY = 'anima';
+
+const WORKFLOW_FILES = {
+  [DEFAULT_WORKFLOW_KEY]: DEFAULT_WORKFLOW_FILE,
+  [ANIMA_WORKFLOW_KEY]: ANIMA_WORKFLOW_FILE
+};
+
 export const STYLE_PRESETS = {
   anime: {
-    workflowFile: 'anime-sdxl-api.json',
     prefix: 'masterpiece, best quality, anime illustration',
     negativePrefix: '',
     width: 1024,
@@ -16,8 +25,8 @@ export const STYLE_PRESETS = {
     steps: 28,
     cfg: 6.5
   },
+
   portrait: {
-    workflowFile: 'anime-sdxl-api.json',
     prefix: 'masterpiece, best quality, anime illustration, portrait, upper body, face focus',
     negativePrefix: '',
     width: 832,
@@ -25,17 +34,17 @@ export const STYLE_PRESETS = {
     steps: 28,
     cfg: 6.5
   },
+
   fullbody: {
-    workflowFile: 'anime-sdxl-api.json',
-    prefix: 'masterpiece, best quality, anime illustration, full body, full-length, from head to toe, feet visible, entire figure in frame, standing, centered composition, subject filling most of the frame',
-    negativePrefix: 'close-up, upper body, bust shot, cowboy shot, giant face, superimposed face, tiny full body, miniature person, cut off feet, cropped legs',
+    prefix: 'masterpiece, best quality, anime illustration, full body, full-length, from head to toe, feet visible, entire figure in frame, standing, centered composition, long shot',
+    negativePrefix: 'close-up, upper body, bust shot, cowboy shot, giant face, superimposed face, tiny full body, miniature person, cut off feet, cropped legs, out of frame',
     width: 896,
     height: 1344,
     steps: 30,
     cfg: 6.5
   },
+
   chibi: {
-    workflowFile: 'anime-sdxl-api.json',
     prefix: 'masterpiece, best quality, cute chibi anime illustration, full body',
     negativePrefix: '',
     width: 1024,
@@ -43,8 +52,8 @@ export const STYLE_PRESETS = {
     steps: 26,
     cfg: 6.0
   },
+
   wallpaper: {
-    workflowFile: 'anime-sdxl-api.json',
     prefix: 'masterpiece, best quality, anime illustration, cinematic background, detailed scenery, wallpaper composition',
     negativePrefix: '',
     width: 1344,
@@ -67,6 +76,7 @@ async function loadWorkflowFile(fileName) {
   const filePath = path.join(workflowDir, fileName);
   const raw = await fs.readFile(filePath, 'utf8');
   const json = JSON.parse(raw);
+
   workflowCache.set(fileName, json);
   return json;
 }
@@ -77,6 +87,7 @@ function findNodeByTitle(workflow, title) {
       return { nodeId, node };
     }
   }
+
   return null;
 }
 
@@ -93,8 +104,26 @@ function setNodeInput(workflow, title, inputKey, value, { required = true } = {}
   found.node.inputs[inputKey] = value;
 }
 
+function connectNodeInput(workflow, title, inputKey, sourceTitle, outputIndex, { required = true } = {}) {
+  const target = findNodeByTitle(workflow, title);
+  const source = findNodeByTitle(workflow, sourceTitle);
+
+  if (!target || !source) {
+    if (required) {
+      throw new Error(`Workflow connection not found: ${sourceTitle} -> ${title}.${inputKey}`);
+    }
+    return;
+  }
+
+  target.node.inputs[inputKey] = [source.nodeId, outputIndex];
+}
+
+function resolveModelPreset(model) {
+  return config.comfyuiModelPresets.find((preset) => preset.name === model) || null;
+}
+
 function resolveCheckpointName(model) {
-  const matchedPreset = config.comfyuiModelPresets.find((preset) => preset.name === model);
+  const matchedPreset = resolveModelPreset(model);
 
   if (matchedPreset?.checkpoint) {
     return matchedPreset.checkpoint;
@@ -103,23 +132,64 @@ function resolveCheckpointName(model) {
   return config.comfyuiCheckpointName;
 }
 
+function isAnimaModel(model, checkpointName) {
+  const text = `${model || ''} ${checkpointName || ''}`.toLowerCase();
+
+  return (
+    text.includes('miaomiao') ||
+    text.includes('qwen')
+  );
+}
+
+function resolveWorkflowKey({ model, checkpointName }) {
+  if (isAnimaModel(model, checkpointName)) {
+    return ANIMA_WORKFLOW_KEY;
+  }
+
+  return DEFAULT_WORKFLOW_KEY;
+}
+
+export function resolveWorkflowChoice({ model }) {
+  const checkpointName = resolveCheckpointName(model);
+  return resolveWorkflowKey({ model, checkpointName });
+}
+
 export async function buildWorkflow({ style, prompt, negativePrompt, seed, model }) {
   const preset = STYLE_PRESETS[style] || STYLE_PRESETS.anime;
-  const baseWorkflow = await loadWorkflowFile(preset.workflowFile);
-  const workflow = structuredClone(baseWorkflow);
   const checkpointName = resolveCheckpointName(model);
+  const workflowKey = resolveWorkflowChoice({ model });
+  const workflowFile = WORKFLOW_FILES[workflowKey] || DEFAULT_WORKFLOW_FILE;
+
+  const baseWorkflow = await loadWorkflowFile(workflowFile);
+  const workflow = structuredClone(baseWorkflow);
 
   const positiveText = [preset.prefix, prompt].filter(Boolean).join(', ');
-  const mergedNegativePrompt = [preset.negativePrefix, negativePrompt].filter(Boolean).join(', ');
+  const mergedNegativePrompt = [preset.negativePrefix, negativePrompt]
+    .filter(Boolean)
+    .join(', ');
 
   setNodeInput(workflow, 'GW_POSITIVE', 'text', positiveText);
   setNodeInput(workflow, 'GW_NEGATIVE', 'text', mergedNegativePrompt);
+
   setNodeInput(workflow, 'GW_KSAMPLER', 'seed', seed);
   setNodeInput(workflow, 'GW_KSAMPLER', 'steps', preset.steps);
   setNodeInput(workflow, 'GW_KSAMPLER', 'cfg', preset.cfg);
+
   setNodeInput(workflow, 'GW_LATENT', 'width', preset.width);
   setNodeInput(workflow, 'GW_LATENT', 'height', preset.height);
-  setNodeInput(workflow, 'GW_SAVE', 'filename_prefix', `discord_${style}`);
+
+  if (workflowKey === ANIMA_WORKFLOW_KEY) {
+    connectNodeInput(workflow, 'GW_POSITIVE', 'clip', 'GW_CLIP', 0);
+    connectNodeInput(workflow, 'GW_NEGATIVE', 'clip', 'GW_CLIP', 0);
+    connectNodeInput(workflow, 'GW_VAE_DECODE', 'vae', 'GW_VAE', 0);
+  }
+
+  setNodeInput(
+    workflow,
+    'GW_SAVE',
+    'filename_prefix',
+    `discord_${workflowKey}_${model || 'default'}_${style}`
+  );
 
   if (checkpointName) {
     setNodeInput(

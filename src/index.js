@@ -1,11 +1,14 @@
+import net from 'node:net';
 import { randomInt } from 'node:crypto';
 import {
   AttachmentBuilder,
   Client,
   EmbedBuilder,
-  GatewayIntentBits
+  GatewayIntentBits,
+  MessageFlags
 } from 'discord.js';
 import { config } from './config.js';
+import { resolveWorkflowChoice } from './workflow-manager.js';
 import { TaskQueue } from './queue.js';
 import { generateImage } from './comfyui.js';
 
@@ -18,6 +21,7 @@ const imageQueue = new TaskQueue({
   maxQueue: config.maxQueue
 });
 
+const SINGLE_INSTANCE_PORT = 47881;
 const lastRequestByUser = new Map();
 const STYLE_COLORS = {
   anime: 0xff7a59,
@@ -26,6 +30,8 @@ const STYLE_COLORS = {
   chibi: 0x7ddc6f,
   wallpaper: 0xf7c948
 };
+const NOOBAI_SAFETY_NEGATIVE =
+  'nsfw, nude, nipples, cleavage, sideboob, underboob, open clothes, unbuttoned shirt, deep neckline, exposed chest, lingerie, bra, suggestive';
 
 function makeSeed() {
   return randomInt(0, 2147483647);
@@ -38,13 +44,38 @@ function formatError(error) {
   return String(error);
 }
 
+function isExplicitContentError(error) {
+  const text = formatError(error).toLowerCase();
+  return text.includes('explicit content cannot be sent');
+}
+
+function isInteractionLifecycleError(error) {
+  const text = formatError(error).toLowerCase();
+  return (
+    error?.code === 10062 ||
+    error?.code === 40060 ||
+    text.includes('unknown interaction') ||
+    text.includes('already been acknowledged')
+  );
+}
+
 function truncate(text, max = 180) {
   if (!text) return '';
   return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
 
-function buildNegativePrompt(extraNegative) {
-  return [config.defaultNegativePrompt, extraNegative]
+function resolveModelSafetyNegative(model) {
+  const text = String(model || '').toLowerCase();
+
+  if (text.includes('noobai')) {
+    return NOOBAI_SAFETY_NEGATIVE;
+  }
+
+  return '';
+}
+
+function buildNegativePrompt(model, extraNegative) {
+  return [config.defaultNegativePrompt, resolveModelSafetyNegative(model), extraNegative]
     .filter(Boolean)
     .join(', ');
 }
@@ -54,13 +85,14 @@ function buildQueueMeta(interaction, request) {
     userId: interaction.user.id,
     prompt: request.prompt,
     style: request.style,
+    workflow: request.workflow,
     model: request.model,
     seed: request.seed
   };
 }
 
 function formatQueueItem(item, index) {
-  return `${index + 1}. <@${item.meta.userId}> [${item.meta.style} / ${item.meta.model}] seed ${item.meta.seed} - ${truncate(item.meta.prompt, 72)}`;
+  return `${index + 1}. <@${item.meta.userId}> [${item.meta.style} / ${item.meta.workflow} / ${item.meta.model}] seed ${item.meta.seed} - ${truncate(item.meta.prompt, 72)}`;
 }
 
 function buildResultEmbed(request, filename, isReroll) {
@@ -69,6 +101,7 @@ function buildResultEmbed(request, filename, isReroll) {
     .setTitle(isReroll ? '이미지 리롤 완료' : '이미지 생성 완료')
     .addFields(
       { name: 'Style', value: request.style, inline: true },
+      { name: 'Workflow', value: request.workflow, inline: true },
       { name: 'Model', value: request.model, inline: true },
       { name: 'Seed', value: String(request.seed), inline: true },
       { name: 'Prompt', value: request.prompt }
@@ -78,7 +111,7 @@ function buildResultEmbed(request, filename, isReroll) {
 }
 
 async function runGeneration(interaction, request, { isReroll = false } = {}) {
-  const negativePrompt = buildNegativePrompt(request.extraNegative);
+  const negativePrompt = buildNegativePrompt(request.model, request.extraNegative);
 
   await interaction.deferReply();
 
@@ -89,6 +122,7 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
         content: [
           isReroll ? '리롤 시작' : '생성 시작',
           `style: ${request.style}`,
+          `workflow: ${request.workflow}`,
           `model: ${request.model}`,
           `seed: ${request.seed}`,
           `prompt: ${truncate(request.prompt)}`
@@ -118,6 +152,7 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
         isReroll ? '리롤 요청이 대기열에 추가됨' : '생성 요청이 대기열에 추가됨',
         `앞에 ${position - 1}개 작업이 있어.`,
         `style: ${request.style}`,
+        `workflow: ${request.workflow}`,
         `model: ${request.model}`,
         `seed: ${request.seed}`,
         `prompt: ${truncate(request.prompt)}`
@@ -125,8 +160,9 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
     });
   }
 
+  let result;
   try {
-    const result = await promise;
+    result = await promise;
 
     const attachment = new AttachmentBuilder(result.buffer, {
       name: result.filename
@@ -138,6 +174,20 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
       files: [attachment]
     });
   } catch (error) {
+    if (isExplicitContentError(error)) {
+      await interaction.editReply({
+        content: [
+          '이미지 생성은 완료됐지만 디스코드가 민감 콘텐츠로 판단해서 업로드를 막았어.',
+          `model: ${request.model}`,
+          `seed: ${request.seed}`,
+          `파일명: ${result?.filename || '생성 완료 이미지'}`
+        ].join('\n'),
+        embeds: [],
+        files: []
+      });
+      return;
+    }
+
     await interaction.editReply({
       content: `생성 실패: ${formatError(error)}`
     });
@@ -145,10 +195,12 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
 }
 
 async function handleIllust(interaction) {
+  const selectedModel = interaction.options.getString('model') || config.defaultModelName || 'default';
   const request = {
     prompt: interaction.options.getString('prompt', true).trim(),
     style: interaction.options.getString('style') || 'anime',
-    model: interaction.options.getString('model') || config.defaultModelName || 'default',
+    workflow: resolveWorkflowChoice({ model: selectedModel }),
+    model: selectedModel,
     seed: interaction.options.getInteger('seed') ?? makeSeed(),
     extraNegative: interaction.options.getString('negative')?.trim() || ''
   };
@@ -156,6 +208,7 @@ async function handleIllust(interaction) {
   lastRequestByUser.set(interaction.user.id, {
     prompt: request.prompt,
     style: request.style,
+    workflow: request.workflow,
     model: request.model,
     extraNegative: request.extraNegative
   });
@@ -169,7 +222,7 @@ async function handleReroll(interaction) {
   if (!previous) {
     await interaction.reply({
       content: '리롤할 이전 생성 기록이 없어. 먼저 `/illust`로 한 번 생성해줘.',
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
     return;
   }
@@ -177,6 +230,7 @@ async function handleReroll(interaction) {
   const request = {
     prompt: previous.prompt,
     style: previous.style,
+    workflow: previous.workflow,
     model: previous.model,
     extraNegative: previous.extraNegative,
     seed: makeSeed()
@@ -185,6 +239,7 @@ async function handleReroll(interaction) {
   lastRequestByUser.set(interaction.user.id, {
     prompt: request.prompt,
     style: request.style,
+    workflow: request.workflow,
     model: request.model,
     extraNegative: request.extraNegative
   });
@@ -215,12 +270,32 @@ async function handleStatus(interaction) {
       '[대기 중]',
       pendingText
     ].join('\n'),
-    ephemeral: true
+    flags: MessageFlags.Ephemeral
   });
 }
 
-client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
+function acquireSingleInstanceLock() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+
+    server.once('error', (error) => {
+      if (error.code === 'EADDRINUSE') {
+        reject(new Error('Another ilust-bot instance is already running.'));
+        return;
+      }
+
+      reject(error);
+    });
+
+    server.listen(SINGLE_INSTANCE_PORT, '127.0.0.1', () => {
+      resolve(server);
+    });
+  });
+}
+
+client.once('clientReady', () => {
+  console.log(`Logged in as ${client.user.tag} (pid ${process.pid})`);
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -247,13 +322,18 @@ client.on('interactionCreate', async (interaction) => {
     console.error('Interaction handling error:');
     console.error(error);
 
+    if (isInteractionLifecycleError(error)) {
+      console.error('Interaction could not be recovered because it was already expired or acknowledged.');
+      return;
+    }
+
     const message = `오류: ${formatError(error)}`;
 
     try {
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply({ content: message });
       } else {
-        await interaction.reply({ content: message, ephemeral: true });
+        await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
       }
     } catch (replyError) {
       console.error('Failed to send error reply:');
@@ -269,5 +349,12 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
 });
+
+try {
+  await acquireSingleInstanceLock();
+} catch (error) {
+  console.error(formatError(error));
+  process.exit(1);
+}
 
 client.login(config.discordToken);
