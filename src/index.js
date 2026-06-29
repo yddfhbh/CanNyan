@@ -1,5 +1,6 @@
 import net from 'node:net';
 import { randomInt } from 'node:crypto';
+import path from 'node:path';
 import {
   AttachmentBuilder,
   Client,
@@ -8,6 +9,8 @@ import {
   MessageFlags
 } from 'discord.js';
 import { config } from './config.js';
+import { resolvePromptPreset } from './prompt-presets.js';
+import { runWd14Tagger } from './tagger.js';
 import { resolveModelSelection, resolveWorkflowChoice } from './workflow-manager.js';
 import { TaskQueue } from './queue.js';
 import { generateImage } from './comfyui.js';
@@ -30,8 +33,14 @@ const STYLE_COLORS = {
   chibi: 0x7ddc6f,
   wallpaper: 0xf7c948
 };
-const NOOBAI_SAFETY_NEGATIVE =
-  'nsfw, nude, nipples, cleavage, sideboob, underboob, open clothes, unbuttoned shirt, deep neckline, exposed chest, lingerie, bra, suggestive';
+const SUPPORTED_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+const TAGGER_MESSAGE_LIMIT = 1900;
+const TAGGER_PROMPT_PREFIX = 'masterpiece, best quality, ultra detailed, anime illustration';
+const TAGGER_NEGATIVE_PROMPT =
+  'low quality, worst quality, blurry, bad anatomy, bad hands, extra fingers, missing fingers, fused fingers, extra limbs, deformed face, text, watermark, logo';
+const TAGGER_MODE_SHORT = 'short';
+const TAGGER_MODE_FULL = 'full';
+const TAGGER_MODE_PROMPT = 'prompt';
 
 function makeSeed() {
   return randomInt(0, 2147483647);
@@ -64,18 +73,147 @@ function truncate(text, max = 180) {
   return text.length > max ? `${text.slice(0, max - 3)}...` : text;
 }
 
-function resolveModelSafetyNegative(model) {
-  const text = String(model || '').toLowerCase();
+function truncateForDiscord(text, max = TAGGER_MESSAGE_LIMIT) {
+  const value = String(text || '').trim();
+  if (!value) {
+    return '';
+  }
 
-  if (text.includes('noobai')) {
-    return NOOBAI_SAFETY_NEGATIVE;
+  if (value.length <= max) {
+    return value;
+  }
+
+  return `${value.slice(0, Math.max(0, max - 16)).trimEnd()}\n...(truncated)`;
+}
+
+function formatScore(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toFixed(2) : String(value);
+}
+
+function formatTagList(items, limit = 999) {
+  const list = Array.isArray(items) ? items.slice(0, limit) : [];
+  return list.length > 0
+    ? list.map((item) => `${item.tag} ${formatScore(item.score)}`).join('\n')
+    : '(없음)';
+}
+
+function getAttachmentFilename(attachment) {
+  if (attachment?.name) {
+    return attachment.name;
+  }
+
+  try {
+    return path.basename(new URL(String(attachment?.url || '')).pathname) || 'image';
+  } catch {
+    return 'image';
+  }
+}
+
+function isSupportedImageAttachment(attachment) {
+  const contentType = String(attachment?.contentType || '').toLowerCase();
+
+  if (contentType.startsWith('image/')) {
+    return true;
+  }
+
+  const ext = path.extname(getAttachmentFilename(attachment)).toLowerCase();
+  return SUPPORTED_IMAGE_EXTENSIONS.has(ext);
+}
+
+async function downloadAttachmentBuffer(attachment) {
+  const response = await fetch(attachment.url);
+
+  if (!response.ok) {
+    throw new Error(`이미지 다운로드 실패: HTTP ${response.status}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
+}
+
+function buildTaggerRecommendation(result) {
+  const prompt = [TAGGER_PROMPT_PREFIX, result.prompt_tags].filter(Boolean).join(', ');
+  const negative = TAGGER_NEGATIVE_PROMPT;
+  const model = config.defaultModelName || 'miaomiao';
+  const command = `/illust prompt: ${prompt} model:${model} style:portrait negative: ${negative}`;
+
+  return { prompt, negative, command };
+}
+
+function buildRatingWarning(result) {
+  const topRating = Array.isArray(result.rating) ? result.rating[0] : null;
+
+  if (!topRating) {
+    return '';
+  }
+
+  if (
+    (topRating.tag === 'explicit' || topRating.tag === 'questionable') &&
+    Number(topRating.score) >= 0.5
+  ) {
+    return `감지된 rating: ${topRating.tag}\n채널 설정과 서버 규칙을 확인해줘.`;
   }
 
   return '';
 }
 
-function buildNegativePrompt(model, extraNegative) {
-  return [config.defaultNegativePrompt, resolveModelSafetyNegative(model), extraNegative]
+function buildTaggerMessage(mode, result) {
+  const warning = buildRatingWarning(result);
+  const recommendation = buildTaggerRecommendation(result);
+  const sections = [];
+
+  if (warning) {
+    sections.push(warning);
+  }
+
+  if (mode === TAGGER_MODE_FULL) {
+    sections.push(
+      'WD14 태그 추출 완료',
+      '',
+      '[Rating]',
+      formatTagList(result.rating, 10),
+      '',
+      '[Character]',
+      formatTagList(result.character, 25),
+      '',
+      '[General]',
+      formatTagList(result.general, 80)
+    );
+
+    if (result.raw_tags) {
+      sections.push('', '[Raw Tags]', result.raw_tags);
+    }
+  } else if (mode === TAGGER_MODE_PROMPT) {
+    sections.push(
+      'WD14 태그 추출 완료',
+      '',
+      '[CanNyan Prompt]',
+      recommendation.prompt || '(없음)',
+      '',
+      '[Negative]',
+      recommendation.negative,
+      '',
+      '[추천 /illust]',
+      recommendation.command
+    );
+  } else {
+    sections.push(
+      'WD14 태그 추출 완료',
+      '',
+      '[Prompt Tags]',
+      result.prompt_tags || '(없음)',
+      '',
+      '[추천 /illust]',
+      recommendation.command
+    );
+  }
+
+  return truncateForDiscord(sections.join('\n'));
+}
+
+function buildNegativePrompt(presetNegative, extraNegative) {
+  return [presetNegative || config.defaultNegativePrompt, extraNegative]
     .filter(Boolean)
     .join(', ');
 }
@@ -84,6 +222,7 @@ function buildQueueMeta(interaction, request) {
   return {
     userId: interaction.user.id,
     prompt: request.prompt,
+    promptPreset: request.promptPreset,
     style: request.style,
     workflow: request.workflow,
     model: request.model,
@@ -92,11 +231,12 @@ function buildQueueMeta(interaction, request) {
 }
 
 function formatQueueItem(item, index) {
-  return `${index + 1}. <@${item.meta.userId}> [${item.meta.style} / ${item.meta.workflow} / ${item.meta.model}] seed ${item.meta.seed} - ${truncate(item.meta.prompt, 72)}`;
+  const presetText = item.meta.promptPreset ? ` / preset:${item.meta.promptPreset}` : '';
+  return `${index + 1}. <@${item.meta.userId}> [${item.meta.style} / ${item.meta.workflow} / ${item.meta.model}${presetText}] seed ${item.meta.seed} - ${truncate(item.meta.prompt, 72)}`;
 }
 
 function buildResultEmbed(request, filename, isReroll) {
-  return new EmbedBuilder()
+  const embed = new EmbedBuilder()
     .setColor(STYLE_COLORS[request.style] || 0x5865f2)
     .setTitle(isReroll ? '이미지 리롤 완료' : '이미지 생성 완료')
     .addFields(
@@ -107,10 +247,19 @@ function buildResultEmbed(request, filename, isReroll) {
     )
     .setImage(`attachment://${filename}`)
     .setTimestamp();
+
+  if (request.promptPreset) {
+    embed.addFields({ name: 'Preset', value: request.promptPreset, inline: true });
+  }
+
+  return embed;
 }
 
 async function runGeneration(interaction, request, { isReroll = false } = {}) {
-  const negativePrompt = buildNegativePrompt(request.model, request.extraNegative);
+  const negativePrompt = buildNegativePrompt(
+    request.presetNegative,
+    request.extraNegative
+  );
 
   await interaction.deferReply();
 
@@ -123,9 +272,10 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
           `style: ${request.style}`,
           `workflow: ${request.workflow}`,
           `model: ${request.model}`,
+          request.promptPreset ? `preset: ${request.promptPreset}` : null,
           `seed: ${request.seed}`,
           `prompt: ${truncate(request.prompt)}`
-        ].join('\n')
+        ].filter(Boolean).join('\n')
       });
 
       return generateImage({
@@ -153,9 +303,10 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
         `style: ${request.style}`,
         `workflow: ${request.workflow}`,
         `model: ${request.model}`,
+        request.promptPreset ? `preset: ${request.promptPreset}` : null,
         `seed: ${request.seed}`,
         `prompt: ${truncate(request.prompt)}`
-      ].join('\n')
+      ].filter(Boolean).join('\n')
     });
   }
 
@@ -194,11 +345,15 @@ async function runGeneration(interaction, request, { isReroll = false } = {}) {
 }
 
 async function handleIllust(interaction) {
+  const rawPrompt = interaction.options.getString('prompt', true).trim();
+  const resolvedPrompt = resolvePromptPreset(rawPrompt);
   const selectedModel = resolveModelSelection(
     interaction.options.getString('model') || config.defaultModelName || ''
   ).modelName;
   const request = {
-    prompt: interaction.options.getString('prompt', true).trim(),
+    prompt: resolvedPrompt.prompt,
+    promptPreset: resolvedPrompt.presetName,
+    presetNegative: resolvedPrompt.negativePrompt,
     style: interaction.options.getString('style') || 'anime',
     workflow: resolveWorkflowChoice({ model: selectedModel }),
     model: selectedModel,
@@ -208,6 +363,8 @@ async function handleIllust(interaction) {
 
   lastRequestByUser.set(interaction.user.id, {
     prompt: request.prompt,
+    promptPreset: request.promptPreset,
+    presetNegative: request.presetNegative,
     style: request.style,
     workflow: request.workflow,
     model: request.model,
@@ -231,6 +388,8 @@ async function handleReroll(interaction) {
   const selectedModel = resolveModelSelection(previous.model).modelName;
   const request = {
     prompt: previous.prompt,
+    promptPreset: previous.promptPreset || '',
+    presetNegative: previous.presetNegative || '',
     style: previous.style,
     workflow: resolveWorkflowChoice({ model: selectedModel }),
     model: selectedModel,
@@ -240,6 +399,8 @@ async function handleReroll(interaction) {
 
   lastRequestByUser.set(interaction.user.id, {
     prompt: request.prompt,
+    promptPreset: request.promptPreset,
+    presetNegative: request.presetNegative,
     style: request.style,
     workflow: request.workflow,
     model: request.model,
@@ -273,6 +434,42 @@ async function handleStatus(interaction) {
       pendingText
     ].join('\n'),
     flags: MessageFlags.Ephemeral
+  });
+}
+
+async function handleTagger(interaction) {
+  await interaction.deferReply();
+
+  const attachment = interaction.options.getAttachment('image', true);
+  const mode = interaction.options.getString('mode') || TAGGER_MODE_SHORT;
+  const generalThreshold = interaction.options.getNumber('general_threshold');
+  const characterThreshold = interaction.options.getNumber('character_threshold');
+
+  if (!attachment?.url) {
+    await interaction.editReply({
+      content: '분석할 이미지 attachment를 찾지 못했어.'
+    });
+    return;
+  }
+
+  if (!isSupportedImageAttachment(attachment)) {
+    await interaction.editReply({
+      content: '지원되는 이미지 파일만 분석할 수 있어. png, jpg, jpeg, webp 파일을 넣어줘.'
+    });
+    return;
+  }
+
+  const imageBuffer = await downloadAttachmentBuffer(attachment);
+  const result = await runWd14Tagger({
+    imageBuffer,
+    filename: getAttachmentFilename(attachment),
+    mode,
+    generalThreshold,
+    characterThreshold
+  });
+
+  await interaction.editReply({
+    content: buildTaggerMessage(mode, result)
   });
 }
 
@@ -318,6 +515,11 @@ client.on('interactionCreate', async (interaction) => {
 
     if (interaction.commandName === 'reroll') {
       await handleReroll(interaction);
+      return;
+    }
+
+    if (interaction.commandName === 'tagger') {
+      await handleTagger(interaction);
       return;
     }
   } catch (error) {

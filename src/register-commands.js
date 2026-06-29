@@ -59,7 +59,44 @@ const commands = [
 
   new SlashCommandBuilder()
     .setName('reroll')
-    .setDescription('마지막 생성 프롬프트로 seed만 바꿔 다시 생성합니다.')
+    .setDescription('마지막 생성 프롬프트로 seed만 바꿔 다시 생성합니다.'),
+
+  new SlashCommandBuilder()
+    .setName('tagger')
+    .setDescription('첨부 이미지를 WD14로 분석해서 프롬프트 태그를 추천합니다.')
+    .addAttachmentOption((option) =>
+      option
+        .setName('image')
+        .setDescription('분석할 이미지 파일')
+        .setRequired(true)
+    )
+    .addStringOption((option) =>
+      option
+        .setName('mode')
+        .setDescription('출력 형식')
+        .setRequired(false)
+        .addChoices(
+          { name: 'short', value: 'short' },
+          { name: 'full', value: 'full' },
+          { name: 'prompt', value: 'prompt' }
+        )
+    )
+    .addNumberOption((option) =>
+      option
+        .setName('general_threshold')
+        .setDescription('일반 태그 임계값 (0~1)')
+        .setRequired(false)
+        .setMinValue(0)
+        .setMaxValue(1)
+    )
+    .addNumberOption((option) =>
+      option
+        .setName('character_threshold')
+        .setDescription('캐릭터 태그 임계값 (0~1)')
+        .setRequired(false)
+        .setMinValue(0)
+        .setMaxValue(1)
+    )
 ].map((command) => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(config.discordToken);
