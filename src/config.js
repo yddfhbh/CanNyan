@@ -122,6 +122,7 @@ export const config = {
   queueConcurrency: toPositiveInt(process.env.IMAGE_QUEUE_CONCURRENCY, 1),
   maxQueue: toPositiveInt(process.env.IMAGE_MAX_QUEUE, 5),
   generationTimeoutMs: toPositiveInt(process.env.GENERATION_TIMEOUT_MS, 180000),
+  webPort: toPositiveInt(process.env.WEB_PORT, 3000),
 
   wd14PythonPath: process.env.WD14_PYTHON || 'python',
   wd14ModelDir: process.env.WD14_MODEL_DIR || 'data/wd14',

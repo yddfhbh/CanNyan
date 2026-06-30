@@ -6,10 +6,14 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "register": "node src/register-commands.js"
+    "register": "node src/register-commands.js",
+    "web": "node src/web-server.js",
+    "dev:web": "node --watch src/web-server.js"
   },
   "dependencies": {
     "discord.js": "^14.21.0",
-    "dotenv": "^16.6.1"
+    "dotenv": "^16.6.1",
+    "express": "^4.22.2",
+    "multer": "^2.2.0"
   }
 }

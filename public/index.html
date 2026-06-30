@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CanNyan Local Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <p class="eyebrow">Local CanNyan Studio</p>
+        <h1>WD14 태거로 태그를 뽑고 바로 생성까지 이어가자.</h1>
+        <p class="hero-copy">
+          이미지를 올려 태그를 추출하고, 프롬프트 박스에 바로 넣은 뒤 ComfyUI 생성까지 한 화면에서 처리할 수 있어.
+        </p>
+        <div class="hero-note" id="downloadNote">
+          첫 실행은 WD14 모델 다운로드 때문에 조금 오래 걸릴 수 있어.
+        </div>
+      </header>
+
+      <main class="grid">
+        <section class="panel panel-upload">
+          <div class="panel-heading">
+            <h2>1. WD14 Tagger</h2>
+            <p>이미지를 올리고 태그를 뽑아와.</p>
+          </div>
+
+          <label class="file-drop" for="taggerImage">
+            <input id="taggerImage" name="image" type="file" accept="image/png,image/jpeg,image/webp" />
+            <span class="file-drop-title">이미지 업로드</span>
+            <span class="file-drop-subtitle" id="selectedFileName">png, jpg, jpeg, webp</span>
+          </label>
+
+          <div class="threshold-row">
+            <label>
+              <span>General Threshold</span>
+              <input id="generalThreshold" type="number" min="0" max="1" step="0.01" value="0.35" />
+            </label>
+            <label>
+              <span>Character Threshold</span>
+              <input id="characterThreshold" type="number" min="0" max="1" step="0.01" value="0.85" />
+            </label>
+          </div>
+
+          <div class="button-row">
+            <button id="extractTagsButton" class="button button-primary" type="button">태그 추출</button>
+            <button id="applyPromptButton" class="button button-secondary" type="button" disabled>프롬프트에 넣기</button>
+            <button id="appendPromptButton" class="button button-ghost" type="button" disabled>프롬프트에 추가하기</button>
+          </div>
+
+          <div class="status-card" id="taggerStatus">아직 태그를 추출하지 않았어.</div>
+
+          <div class="result-card">
+            <div class="result-header">
+              <h3>Prompt Tags</h3>
+              <button id="toggleRawTagsButton" class="link-button" type="button">raw tags 보기</button>
+            </div>
+            <pre id="promptTagsOutput" class="tag-output">여기에 추출된 prompt tags가 표시돼.</pre>
+            <pre id="rawTagsOutput" class="tag-output collapsed" hidden>여기에 raw tags가 표시돼.</pre>
+          </div>
+
+          <div class="result-card compact">
+            <h3>분석 상세</h3>
+            <div id="analysisMeta" class="meta-grid"></div>
+          </div>
+        </section>
+
+        <section class="panel panel-generate">
+          <div class="panel-heading">
+            <h2>2. Generate</h2>
+            <p>태그를 조합하고 바로 ComfyUI 생성으로 보낼 수 있어.</p>
+          </div>
+
+          <div class="control-grid">
+            <label>
+              <span>Style</span>
+              <select id="styleSelect"></select>
+            </label>
+            <label>
+              <span>Model</span>
+              <select id="modelSelect"></select>
+            </label>
+            <label>
+              <span>Seed</span>
+              <input id="seedInput" type="number" min="0" max="2147483647" placeholder="비워두면 랜덤" />
+            </label>
+          </div>
+
+          <label class="field-block">
+            <span>Prompt</span>
+            <textarea id="promptTextarea" rows="10" placeholder="프롬프트를 입력하거나 WD14 태그를 넣어줘."></textarea>
+          </label>
+
+          <label class="field-block">
+            <span>Negative</span>
+            <textarea id="negativeTextarea" rows="5" placeholder="추가 네거티브 프롬프트"></textarea>
+          </label>
+
+          <div class="button-row">
+            <button id="generateButton" class="button button-primary" type="button">Generate</button>
+          </div>
+
+          <div class="status-card" id="generateStatus">아직 생성 요청을 보내지 않았어.</div>
+
+          <div class="preview-card">
+            <div class="preview-header">
+              <h3>Preview</h3>
+              <span id="imageMeta"></span>
+            </div>
+            <img id="previewImage" alt="Generated preview" hidden />
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+  </html>
